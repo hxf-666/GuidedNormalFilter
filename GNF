@@ -1,0 +1,487 @@
+
+#include <stdio.h>
+#include <tchar.h>
+#include <boost/bind.hpp>
+#include <boost/thread/thread.hpp>
+#include <pcl/PCLPointCloud2.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/io/ply_io.h>
+#include <pcl/filters/fast_bilateral.h>
+#include <pcl/console/print.h>
+#include <pcl/console/parse.h>
+#include <pcl/console/time.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/common/common.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/visualization/cloud_viewer.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/normal_space.h>
+#include <pcl/surface/gp3.h>
+#include <pcl/surface/poisson.h>
+
+using namespace std;
+using namespace pcl;
+using namespace pcl::io;
+using namespace pcl::console;
+
+double radius = 0.3;//default 0.03
+int p = 50;//default 200  N
+
+//float A[400000][3];
+
+
+
+void main()
+{
+	//ptr  指针  空对象 cloud
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_1(new pcl::PointCloud<pcl::PointXYZ>());
+	//最终结果
+	cout << "kaishiduqu";
+	pcl::PointCloud<pcl::PointXYZ>::Ptr final_result(new pcl::PointCloud<pcl::PointXYZ>());
+	pcl::io::loadPCDFile("E:\\数\\PCL-filter\\Y\\3_Y_noisy.pcd", *cloud);
+	cout << "duqujieshu";
+	vector<int> indices;
+	pcl::removeNaNFromPointCloud(*cloud, *cloud, indices);		//去除无效点
+	cout << "duqujieshu";
+	//读出文件的新对象   result
+	//PointXYZI  成员变量: float x, y, z, intensity
+
+
+	//创建法线估计对象，并将输入数据集传递给这个对象
+	//计算法线
+	pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+
+	//存储输出数据
+	PointCloud<pcl::Normal>::Ptr normal(new PointCloud<Normal>());
+	//创建为 tree对象
+	pcl::search::KdTree<PointXYZ>::Ptr tree(new pcl::search::KdTree<PointXYZ>());
+	//为kdtree添加点运数据
+	tree->setInputCloud(cloud);
+	//定义视点
+	ne.setInputCloud(cloud);
+	//输出数据集
+	ne.setSearchMethod(tree);
+	//ne.setRadiusSearch(radius);
+	//点云法向计算时，需要所搜的近邻点大小 p
+	ne.setKSearch(p);
+	//计算特征值
+	ne.compute(*normal);
+
+	/*
+	//这里就可以画一个图了  原点云的图
+	  //normal visualization
+	pcl::visualization::PCLVisualizer viewer("PCL viewer");
+	viewer.setBackgroundColor(0.0, 0.0, 0.0);
+	viewer.addPointCloudNormals<pcl::PointXYZ, pcl::Normal>(cloud, normal);
+
+	while (!viewer.wasStopped())
+	{
+		viewer.spinOnce();
+	}*/
+
+
+	//这边更新法线：
+
+	KdTreeFLANN<PointXYZ> kdtree;
+	kdtree.setInputCloud(cloud);
+
+	vector<int> pointIdx;		//临近索引
+	vector<float> pointDis;		//存储近邻对应的平方距离
+	float par = 0.04;
+	/*
+	double sigma_s = 0.0;
+	double sigma_r = 0.8;
+
+	//法线迭代次数
+	int iter = 4;
+
+	//更新点迭代次数
+	int updateIter = 1;
+	*/
+	int numOfPoints = 0;  //邻域点数目
+	int num = 0, numofp = 0;
+
+	//法线的平均
+
+
+	TicToc tt_1;   //记录时间长度
+	tt_1.tic();
+	//PointCloud<Normal>::ConstPtr aver_normal(new PointCloud<Normal>());
+	PointCloud<Normal>::Ptr aver_normal(new PointCloud<Normal>());
+	PointCloud<Normal>::Ptr b(new PointCloud<Normal>());
+	PointCloud<Normal>::Ptr new_cloud_normal(new PointCloud<Normal>());
+	vector<float>aver_normal_dot;
+	vector<float>ever_dot;
+	vector<float>aver_sum_dot;
+	vector<float>numerator;
+	vector<float>a;
+	Normal aver_normal_1;
+	Normal b_1;
+	Normal new_cloud_normal_1;
+
+	float temp_aver_x, temp_aver_y, temp_aver_z, temp_aver_curvature;
+	cout << cloud->size() << "cloud size";
+	for (int i = 0; i < cloud->size(); i++)
+	{
+		float temp_sum_x = 0, temp_sum_y = 0, temp_sum_z = 0;
+		kdtree.nearestKSearch(cloud->points[i], p, pointIdx, pointDis);
+		//cout << pointIdx.size()<<"pointIdx.size";
+		//计算邻域点数目
+		numofp = pointIdx.size();
+		//num += numofp;
+	//	cout << normal->points[4].normal_x <<"nomal";
+	//	cout << pointIdx[7] << "pointIdx";
+		for (int j = 0; j < numofp; j++)
+		{
+			//求每一个乘积  ——准备加和
+			ever_dot.push_back(normal->points[pointIdx[j]].normal_x * normal->points[pointIdx[j]].normal_x + normal->points[pointIdx[j]].normal_y * normal->points[pointIdx[j]].normal_y + normal->points[pointIdx[j]].normal_z * normal->points[pointIdx[j]].normal_z);
+
+			//cout << endl<< "nomal";
+
+			//求各个邻域的平均值
+			//先加和：
+			temp_sum_x = normal->points[pointIdx[j]].normal_x + temp_sum_x;
+			temp_sum_y = normal->points[pointIdx[j]].normal_y + temp_sum_y;
+			temp_sum_z = normal->points[pointIdx[j]].normal_z + temp_sum_z;
+
+		}
+		//kj
+	//	cout << endl << normal->points[pointIdx[2]].normal_z<<"vbfgv";
+
+	//	cout << endl<< temp_sum_x << temp_sum_y<< temp_sum_z<<"加和 平均结束";
+	//	cout << endl << temp_sum_x / numofp << temp_sum_y / numofp << temp_sum_z / numofp;
+		//后面开始问题
+		//求平均：
+
+		aver_normal_1.normal_x = temp_sum_x / numofp;
+		aver_normal_1.normal_y = temp_sum_x / numofp;
+		aver_normal_1.normal_z = temp_sum_x / numofp;
+		//	cout << aver_normal_1.normal_x << endl<<"999";
+		aver_normal_1.curvature = normal->points[i].curvature;  //这里没有对曲率求平均
+	//	cout << aver_normal_1.curvature  << endl<<"888";
+		aver_normal->points.push_back(aver_normal_1);
+		//	cout << "平均法线结束";
+		//	cout << "232ss" << aver_normal->points[i];
+
+		aver_normal_dot.push_back(aver_normal->points[i].normal_x * aver_normal->points[i].normal_x + aver_normal->points[i].normal_y * aver_normal->points[i].normal_y + aver_normal->points[i].normal_z * aver_normal->points[i].normal_z);
+		//	cout << aver_normal_dot[i] << "平均法线点积";
+
+
+			//求和：
+		int v = accumulate(ever_dot.begin(), ever_dot.end(), 0);
+		//	cout << v << "shuzi";
+		aver_sum_dot.push_back(accumulate(ever_dot.begin(), ever_dot.end(), 0));
+		//	cout << "加和点积"<< aver_sum_dot[i];
+
+			//a
+		numerator.push_back((aver_sum_dot[i] - aver_normal_dot[i]) / p);
+		//	cout << "**点积";
+		a.push_back(numerator[i] / numerator[i] + par);
+
+		b_1.normal_x = (1 - a[i]) * aver_normal->points[i].normal_x;
+		b_1.normal_y = (1 - a[i]) * aver_normal->points[i].normal_y;
+		b_1.normal_z = (1 - a[i]) * aver_normal->points[i].normal_z;
+		b_1.curvature = normal->points[i].curvature;  //这里没有对曲率求平均
+		b->points.push_back(b_1);
+
+		//	cout << "bbbb" << b->points[i].normal_x;
+		//	cout << endl<<"b结束";
+
+			/*
+			//b
+			b->points[i].normal_x = (1 - a[i]) * aver_normal->points[i].normal_x;
+			b->points[i].normal_y = (1 - a[i]) * aver_normal->points[i].normal_y;
+			b->points[i].normal_z = (1 - a[i]) * aver_normal->points[i].normal_z;
+			b->points[i].curvature = normal->points[i].curvature;  //这里没有对曲率求平均*/
+
+			//新点云：
+		new_cloud_normal_1.normal_x = a[i] * normal->points[i].normal_x + b->points[i].normal_x;
+		new_cloud_normal_1.normal_y = a[i] * normal->points[i].normal_y + b->points[i].normal_y;
+		new_cloud_normal_1.normal_z = a[i] * normal->points[i].normal_z + b->points[i].normal_z;
+		new_cloud_normal_1.curvature = normal->points[i].curvature;  //这里没有对曲率求平均
+		new_cloud_normal->points.push_back(new_cloud_normal_1);
+
+		//	cout << endl << "新点云生成";
+		//	cout << b->points[i].normal_x << "sd" << endl;
+			/*
+			//新点云：
+			new_cloud_normal->points[i].normal_x = a[i] * normal->points[i].normal_x + b->points[i].normal_x;
+			new_cloud_normal->points[i].normal_y = a[i] * normal->points[i].normal_y + b->points[i].normal_y;
+			new_cloud_normal->points[i].normal_z = a[i] * normal->points[i].normal_z + b->points[i].normal_z;
+			new_cloud_normal->points[i].curvature = normal->points[i].curvature;  //这里没有对曲率求平均*/
+	}
+	::print_info("[done, "); ::print_value("%g", tt_1.toc()); ::print_info(" ms : \n");
+
+
+
+	// new_cloud
+	PointXYZ cloud_2(0.0, 0.0, 0.0);
+	PointXYZ final_result_1(0.0, 0.0, 0.0);
+	//对于无序点云hight默认是1
+	final_result->height = 1;
+	//cloud_extract点云文件中push_back了j个点，故width=j
+	final_result->width = cloud->size();
+
+
+	//更新点迭代次数
+	int updateIter =1;
+
+
+
+//	pcl::PointCloud<pcl::PointXYZ>::Ptr temp_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+//	pcl::PointCloud<pcl::PointXYZ>::Ptr temp_result(new pcl::PointCloud<pcl::PointXYZ>());
+//	float A[400000][3];
+	TicToc tt;
+	tt.tic();
+	//update point position
+	for (int t = 0; t < updateIter; t++) {
+		//final_result.swap(PointCloud<PointXYZ>());
+		//PointCloud<PointXYZ>().swap(*final_result);
+	//	final_result->clear();
+		for (int k = 0; k < cloud->size(); k++) {
+			//kdtree.radiusSearch(cloud->points[k], radius, pointIdx, pointDis);
+			kdtree.nearestKSearch(cloud->points[k], p, pointIdx, pointDis);
+			//	cout << "1";
+				//计算邻域点数目
+			numOfPoints = pointIdx.size();
+
+			PointXYZ temp_point(0.0, 0.0, 0.0);
+		//	PointXYZ temp_cloud_point(0.0, 0.0, 0.0);
+			for (size_t m = 0; m < numOfPoints; m++) {
+				float temp = new_cloud_normal->points[k].normal_x * (cloud->points[pointIdx[m]].x - cloud->points[k].x) + new_cloud_normal->points[k].normal_y * (cloud->points[pointIdx[m]].y - cloud->points[k].y) + new_cloud_normal->points[k].normal_z * (cloud->points[pointIdx[m]].z - cloud->points[k].z);
+				//	cout << "2";
+				temp_point.x += new_cloud_normal->points[k].normal_x * temp;
+				temp_point.y += new_cloud_normal->points[k].normal_y * temp;
+				temp_point.z += new_cloud_normal->points[k].normal_z * temp;
+				//	cout << "3";
+			}
+			cloud_2.x = cloud->points[k].x + temp_point.x / numOfPoints;
+			cloud_2.y = cloud->points[k].y + temp_point.y / numOfPoints;
+			cloud_2.z = cloud->points[k].z + temp_point.z / numOfPoints;
+			//	cloud->points[k].x = cloud->points[k].x + temp_point.x / numOfPoints;
+			//	cloud->points[k].y = cloud->points[k].y + temp_point.y / numOfPoints;
+			//	cloud->points[k].z = cloud->points[k].z + temp_point.z / numOfPoints;
+
+			cloud_1->points.push_back(cloud_2);
+
+			final_result_1.x = cloud_1->points[k].x;
+			final_result_1.y = cloud_1->points[k].y;
+			final_result_1.z = cloud_1->points[k].z;
+
+			final_result->points.push_back(final_result_1);
+/*
+			if (t == 0) {
+				//cout << "tempx+==" << cloud->points[k].x + temp_point.x / numOfPoints << ",tempy+==" << cloud->points[k].y + temp_point.y / numOfPoints << ",tempz+==" << cloud->points[k].z + temp_point.z / numOfPoints << endl;
+				cloud_2.x = cloud->points[k].x + temp_point.x / numOfPoints;
+				cloud_2.y = cloud->points[k].y + temp_point.y / numOfPoints;
+				cloud_2.z = cloud->points[k].z + temp_point.z / numOfPoints;
+				//	cloud->points[k].x = cloud->points[k].x + temp_point.x / numOfPoints;
+				//	cloud->points[k].y = cloud->points[k].y + temp_point.y / numOfPoints;
+				//	cloud->points[k].z = cloud->points[k].z + temp_point.z / numOfPoints;
+
+				cloud_1->points.push_back(cloud_2);
+
+			//	cout << "第一次结束" << endl;
+				//储存，为后面准备
+				A[k][0] = cloud_1->points[k].x;
+				A[k][1] = cloud_1->points[k].y;
+				A[k][2] = cloud_1->points[k].z;
+
+				final_result->points.push_back(cloud_2);
+
+				/*
+				final_result_1.x = cloud_1->points[k].x;
+				final_result_1.y = cloud_1->points[k].y;
+				final_result_1.z = cloud_1->points[k].z;
+				
+				final_result->points.push_back(final_result_1);*/
+				
+			}
+
+		/*
+			else if (t != 0)
+			{
+
+				A[k][0] = A[k][0] + temp_point.x / numOfPoints;
+				A[k][1] = A[k][1] + temp_point.y / numOfPoints;
+				A[k][2] = A[k][2] + temp_point.z / numOfPoints;
+
+				cloud_2.x = A[k][0];
+				cloud_2.y = A[k][1];
+				cloud_2.z = A[k][2];
+				final_result->points.push_back(cloud_2);
+
+			}
+			
+			//final_result->points[k].x = cloud->points[k].x;
+		//	final_result->points[k].y = cloud->points[k].y;
+			//final_result->points[k].z = cloud->points[k].z;
+			//cout << "after point:" << cloud->points[k].x << "," << cloud->points[k].y << "," << cloud->points[k].z<< endl;
+
+		}*/
+
+	}
+
+
+	::print_info("[done, "); ::print_value("%g", tt.toc()); ::print_info(" ms : \n");
+
+	::savePCDFile("E:\\数\\PCL-filter\\Y\\Yp-0.3-50-Ours.pcd", *final_result);
+
+}
+	//计算 A mean  D mean  D max
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	/*
+
+		//PointCloud<Normal>::ConstPtr aver_normal(new PointCloud<Normal>());
+
+	//泊松算法：
+
+		//将点云和法线放到一起
+	pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointNormal>);
+	pcl::concatenateFields(*cloud, *new_cloud_normal, *cloud_with_normals);
+
+	//创建搜索树
+	pcl::search::KdTree<pcl::PointNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointNormal>);
+	tree2->setInputCloud(cloud_with_normals);
+	//创建Poisson对象，并设置参数
+	pcl::Poisson<pcl::PointNormal> pn;
+	pn.setConfidence(true); //是否使用法向量的大小作为置信信息。如果false，所有法向量均归一化。
+	pn.setDegree(2); //设置参数degree[1,5],值越大越精细，耗时越久。
+	pn.setDepth(8); //树的最大深度，求解2^d x 2^d x 2^d立方体元。由于八叉树自适应采样密度，指定值仅为最大深度。
+	pn.setIsoDivide(6);
+	pn.setManifold(false); //是否添加多边形的重心，当多边形三角化时。 设置流行标志，如果设置为true，则对多边形进行细分三角话时添加重心，设置false则不添加
+	pn.setOutputPolygons(false); //是否输出多边形网格（而不是三角化移动立方体的结果）
+	//把samplespernode的值设置小些 
+	pn.setSamplesPerNode(5); //设置落入一个八叉树结点中的样本点的最小数量。无噪声，[1.0-5.0],有噪声[15.-20.]平滑
+	pn.setScale(1.25); //设置用于重构的立方体直径和样本边界立方体直径的比率。
+	pn.setSolverDivide(8); //设置求解线性方程组的Gauss-Seidel迭代方法的深度
+	//pn.setIndices();
+
+	//设置搜索方法和输入点云
+	pn.setSearchMethod(tree2);
+	pn.setInputCloud(cloud_with_normals);
+	//创建多变形网格，用于存储结果
+	pcl::PolygonMesh mesh;
+	//执行重构
+	pn.performReconstruction(mesh);
+
+	cout << "重构"<<endl;
+	//保存网格图
+	pcl::io::savePLYFile("E:\\数\\PCL-filter\\高斯0.001\\除数参数为0.01 K=50 高斯 0.001\\possion-result-参数5-IsoDivide(6).ply", mesh);
+	cout << "保存";
+	*/
+	
+	/*
+	//贪婪三角投影算法：
+
+	 //将点云和法线放到一起
+	pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointNormal>);
+	pcl::concatenateFields(*cloud, *new_cloud_normal, *cloud_with_normals);
+	//* cloud_with_normals = cloud + normals
+
+	//创建搜索树
+	pcl::search::KdTree<pcl::PointNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointNormal>);
+	tree2->setInputCloud(cloud_with_normals);
+
+	//初始化GreedyProjectionTriangulation对象，并设置参数
+	pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+	//创建多变形网格，用于存储结果
+	pcl::PolygonMesh triangles;
+
+	//设置GreedyProjectionTriangulation对象的参数
+	  //第一个参数影响很大
+	gp3.setSearchRadius(0.01); //设置连接点之间的最大距离（最大边长）用于确定k近邻的球半径【默认值 0】
+	gp3.setMu(3); //设置最近邻距离的乘子，以得到每个点的最终搜索半径【默认值 0】
+	gp3.setMaximumNearestNeighbors(100); //设置搜索的最近邻点的最大数量
+	gp3.setMaximumSurfaceAngle(M_PI / 4); // 45 degrees（pi）最大平面角
+	gp3.setMinimumAngle(M_PI / 18); // 10 degrees 每个三角的最小角度
+	gp3.setMaximumAngle(2 * M_PI / 3); // 120 degrees 每个三角的最大角度
+	gp3.setNormalConsistency(false); //如果法向量方向一致，设置为true
+
+	//设置搜索方法和输入点云
+	gp3.setInputCloud(cloud_with_normals);
+	gp3.setSearchMethod(tree2);
+
+	//执行重构，结果保存在triangles中
+	gp3.reconstruct(triangles);
+
+	//保存网格图
+	pcl::io::savePLYFile("E:\\数\\PCL-filter\\高斯0.001\\除数参数为0.01 K=100 高斯 0.001\\bunny-triangle-result-setMu3.ply", triangles);
+	*/
+
+	/*
+	 // //移动立方体算法
+    pcl::MarchingCubes<pcl::PointNormal> *mc;
+     mc = new pcl::MarchingCubesHoppe<pcl::PointNormal>();
+    // /*
+    //   if (hoppe_or_rbf == 0)
+    //     mc = new pcl::MarchingCubesHoppe<pcl::PointNormal> ();
+    //   else
+    //   {
+    //     mc = new pcl::MarchingCubesRBF<pcl::PointNormal> ();
+    //     (reinterpret_cast<pcl::MarchingCubesRBF<pcl::PointNormal>*> (mc))->setOffSurfaceDisplacement (off_surface_displacement);
+    //   }
+    / *
+	//创建多变形网格，用于存储结果
+	 pcl::PolygonMesh mesh;
+	 //设置MarchingCubes对象的参数
+	 mc->setIsoLevel(0.0f);
+	mc->setGridResolution(50, 50, 50);
+	 mc->setPercentageExtendGrid(0.0f);
+	 //设置搜索方法
+	mc->setInputCloud(cloud_with_normals);
+	 //执行重构，结果保存在mesh中
+	 mc->reconstruct(mesh);
+	//保存网格图
+	pcl::io::saveVTKFile("result-cubes.ply", mesh);
+	 std::cerr << "移动立方体 完成" << std::endl;
+	*/
+
+
+
+	/*
+	//通过法向量重求点：
+	const pcl::PointCloud<Normal>::ConstPtr T=new_cloud_normal;
+	pcl::PointCloud<pcl::PointXYZ>::Ptr filter_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+	const pcl::PointCloud<Normal>::Ptr L;
+	//赋值问题
+	pcl::NormalSpaceSampling< pcl::PointXYZ, pcl::Normal > ::Ptr new_cloud(new NormalSpaceSampling< pcl::PointXYZ, pcl::Normal >);
+	new_cloud->setNormals(T);
+	new_cloud->setInputCloud(cloud);
+	int p = cloud->size();
+	new_cloud->setSample(p);
+	new_cloud->setSeed(1);
+	new_cloud->setBins(5, 5, 5);
+	new_cloud->filter(filter_cloud,L);
+	//new_cloud->setIndices(p);
+	//new_cloud->filter(filter_cloud);
+
+
+	savePCDFile("bunny_Gusssiuan_filter.pcd", *new_cloud_normal);
+
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> view1(new pcl::visualization::PCLVisualizer("after normal"));  //创建可视化窗口，名字
+	view1->setBackgroundColor(0, 0, 0);  //设置背景色为黑色
+	view1->addPointCloudNormals<pcl::PointXYZ, pcl::Normal>(cloud, new_cloud_normal, 10, 0.05, "Normals1");
+	view1->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_FONT_SIZE, 1, "Normals1"); //设置点的大小
+	view1->addCoordinateSystem(1.0); //建立空间直角坐标系
+	view1->initCameraParameters();  //初始化相机参数
+	while (!view1->wasStopped()) {
+		view1->spinOnce(100);  //显示
+	}	*/
